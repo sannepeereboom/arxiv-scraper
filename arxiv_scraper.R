@@ -1,5 +1,6 @@
 require(rvest)
 require(stringr)
+require(readr)
 
 arxiv_scraper <- function(url, from_date = NA, to_date = NA, output_file = "arxiv_results.csv", download_pdf = F) {
 
@@ -23,6 +24,9 @@ arxiv_scraper <- function(url, from_date = NA, to_date = NA, output_file = "arxi
   rm(html)
   
   cat('Total results:', total_results, '\n\n')
+  if (total_results > 10000) {
+    cat('Warning: arXiv only shows the first 10,000 results (up to 50 pages). Consider batching searches by date range.\n')
+  }
   
   # extract data from all pages
   total_pages <- ceiling(min(total_results, 10000) / 200)
@@ -43,52 +47,52 @@ arxiv_scraper <- function(url, from_date = NA, to_date = NA, output_file = "arxi
     # extract metadata per result
     extract_metadata <- function(result) {
       arxiv_identifier <- result %>%
-        html_element('.list-title a') %>%
+        html_element(xpath = './/p[contains(@class, "list-title")]//a[starts-with(., "arXiv:")]') %>%
         html_text2()
       
       title <- result %>%
-        html_element('.title') %>%
+        html_element('p.title.is-5') %>%
         html_text2()
       
       authors <- result %>%
-        html_elements('.authors a') %>%
+        html_elements('p.authors a') %>%
         html_text2() %>%
-        paste(collapse = "; ")
+        paste(collapse = '; ')
       
       abstract <- result %>%
-        html_element('.abstract-full') %>%
+        html_element('p.abstract span.abstract-full') %>%
         html_text2() %>%
-        str_remove_all(' △ Less')
+        str_remove_all(' ?△ Less$')
       
       date <- result %>%
-        html_element('.is-size-7') %>%
+        html_element(xpath = './/p[@class="is-size-7" and contains(., "Submitted")]') %>%
         html_text2() %>%
         str_extract(regex('[0-9]{4}'))
       
       categories <- result %>%
-        html_elements('.tags .tag') %>%
+        html_elements('div.tags.is-inline-block .tag') %>%
         html_text2() %>%
-        paste(collapse = "; ")
+        paste(collapse = '; ')
       
       doi <- result %>%
-          html_element('.tags.has-addons .tag.is-light a') %>%
+          html_element('div.tags.has-addons span.tag a') %>%
           html_text2()
       
       journal_reference <- result %>%
-          html_element('.comments.is-size-7') %>%
-          html_text2() %>%
-          str_extract("Journal ref: (.*)") %>%
-          str_remove("Journal ref: ")
+          html_element(xpath = './/p[contains(@class, "comments") and contains(., "Journal ref:")]') %>%
+        html_text2() %>%
+          str_extract('Journal ref: (.*)') %>%
+          str_remove('Journal ref: ')
       
       comments <- result %>%
-          html_element('.comments.is-size-7') %>%
-          html_text2() %>%
-          str_extract("Comments: (.*)") %>%
-          str_remove("Comments: ")
+          html_element(xpath = './/p[contains(@class, "comments") and contains(., "Comments:")]') %>%
+        html_text2() %>%
+          str_extract('Comments: (.*)') %>%
+          str_remove('Comments: ')
       
       pdf_link <- result %>%
         html_element('.list-title a[href*="/pdf/"]') %>%
-        html_attr("href")
+        html_attr('href')
       
       df<- data.frame(
         arXiv_identifier = arxiv_identifier,
@@ -111,11 +115,8 @@ arxiv_scraper <- function(url, from_date = NA, to_date = NA, output_file = "arxi
     page_data <- do.call(rbind, page_data)
     
     # add page results to csv
-    if (!file.exists(output_file)) {
-      write.table(page_data, output_file, row.names = F, col.names = names(page_data), sep = "@@@@@")
-    } else {
-      write.table(page_data, output_file, append = T, row.names = F, col.names = F, sep = "@@@@@")
-    }
+    write_excel_csv(page_data, output_file, append = TRUE, col_names = !file.exists(output_file))
+    
     
     # download PDFs
     if (download_pdf) {
@@ -142,17 +143,36 @@ arxiv_scraper <- function(url, from_date = NA, to_date = NA, output_file = "arxi
 }
 
 ### EXAMPLE
-url <- "https://arxiv.org/search/advanced?advanced=&terms-0-operator=AND&terms-0-term=%22language+model*%22+OR+%22large+language+model*%22+OR+%22generative+language+model*%22+OR+LLM*+OR+ChatGPT+OR+GPT*+OR+llama*+OR+claude*+OR+palm*+OR+gemini*+OR+deepseek*+OR+%22generative+pre-trained%22&terms-0-field=abstract&terms-1-operator=AND&terms-1-term=psycholog*+OR+cognit*+OR+psychometric*+OR+assess*+OR+measur*+OR+test*+OR+scale*+OR+instrument*+OR+behavior*+OR+abilit*+OR+capabilit*+OR+skill*+OR+%22latent+trait*%22+OR+%22latent+variable*%22+OR+%22latent+construct*%22+OR+%22latent+factor*%22+OR+%22latent+dimension*%22+OR+%22latent+structure*%22+OR+%22latent+characteristic*%22+OR+%22underlying+trait*%22+OR+%22underlying+variable*%22+OR+%22underlying+construct*%22+OR+%22underlying+factor*%22+OR+%22underlying+dimension*%22+OR+%22underlying+structure*%22+OR+%22underlying+characteristic*%22+OR+personalit*+OR+intelligen*+OR+reason*+OR+%22theory+of+mind%22+OR+conscious*+OR+metacogniti*+OR+attitude*+OR+opinion*+OR+belief*+OR+moral*+OR+ethic*+OR+value*+OR+norm*+OR+emotion*+OR+affect*+OR+mood*+OR+%22decision+making%22+OR+judgment*+OR+%22problem+solving%22+OR+bias*+OR+creativ*+OR+%22pattern+recognition%22+OR+empath*+OR+%22self+concept%22+OR+identit*+OR+motivation*&terms-1-field=abstract&terms-2-operator=NOT&terms-2-term=multimodal+OR+engineering+OR+classification+OR+%22sentiment+analysis%22+OR+%22vision-language%22&terms-2-field=abstract&classification-physics_archives=all&classification-include_cross_list=include&date-filter_by=all_dates&date-year=&date-from_date=&date-to_date=&date-date_type=submitted_date&abstracts=show&size=50&order="
+# url <- "https://arxiv.org/search/advanced?advanced=&terms-0-operator=AND&terms-0-term=%22language+model*%22+OR+%22large+language+model*%22+OR+%22generative+language+model*%22+OR+LLM*+OR+ChatGPT+OR+GPT*+OR+llama*+OR+claude*+OR+palm*+OR+gemini*+OR+deepseek*+OR+%22generative+pre-trained%22&terms-0-field=abstract&terms-1-operator=AND&terms-1-term=psycholog*+OR+cognit*+OR+psychometric*+OR+assess*+OR+measur*+OR+test*+OR+scale*+OR+instrument*+OR+behavior*+OR+abilit*+OR+capabilit*+OR+skill*+OR+%22latent+trait*%22+OR+%22latent+variable*%22+OR+%22latent+construct*%22+OR+%22latent+factor*%22+OR+%22latent+dimension*%22+OR+%22latent+structure*%22+OR+%22latent+characteristic*%22+OR+%22underlying+trait*%22+OR+%22underlying+variable*%22+OR+%22underlying+construct*%22+OR+%22underlying+factor*%22+OR+%22underlying+dimension*%22+OR+%22underlying+structure*%22+OR+%22underlying+characteristic*%22+OR+personalit*+OR+intelligen*+OR+reason*+OR+%22theory+of+mind%22+OR+conscious*+OR+metacogniti*+OR+attitude*+OR+opinion*+OR+belief*+OR+moral*+OR+ethic*+OR+value*+OR+norm*+OR+emotion*+OR+affect*+OR+mood*+OR+%22decision+making%22+OR+judgment*+OR+%22problem+solving%22+OR+bias*+OR+creativ*+OR+%22pattern+recognition%22+OR+empath*+OR+%22self+concept%22+OR+identit*+OR+motivation*&terms-1-field=abstract&terms-2-operator=NOT&terms-2-term=multimodal+OR+engineering+OR+classification+OR+%22sentiment+analysis%22+OR+%22vision-language%22&terms-2-field=abstract&classification-physics_archives=all&classification-include_cross_list=include&date-filter_by=all_dates&date-year=&date-from_date=&date-to_date=&date-date_type=submitted_date&abstracts=show&size=50&order="
 
-# < 10.000 results
-arxiv_scraper(url, output_file = "arxiv_results.csv")
+## < 10.000 results
+#arxiv_scraper(url, 
+#             output_file = "arxiv_results.csv", 
+#             from_date = "2017-01-01", 
+#             to_date = "2017-06-01", 
+#             download_pdf = F)
 
-# Batching by date for > 10.000 results
-timeframe <- seq.Date(as.Date("2017-01-01"), as.Date("2019-01-01"), by = "6 months")
-for(i in 1:(length(timeframe)-1)){
-  arxiv_scraper(url, from_date = timeframe[i], to_date = timeframe[i+1], output_file = "arxiv_results.csv")
-}
+##########################################
 
-# download pdfs in a separate folder named arxiv_scraped_pdfs
-# maybe not a good idea if there are thousands of results
-arxiv_scraper(url, output_file = "arxiv_results.csv", download_pdf = T)
+## Batching by date for > 10.000 results; 2017 to 2019
+#timeframe <- seq.Date(as.Date("2017-01-01"), 
+#                      as.Date("2020-01-01"), 
+#                      by = "6 months")
+
+## Adjust upper bound to last day of 2019
+#timeframe[length(timeframe)] <- timeframe[length(timeframe)]-1
+
+## Run export
+#for(i in 1:(length(timeframe)-1)){
+#  print(paste0("Scraping from ", timeframe[i], " to ", timeframe[i+1]))
+#  arxiv_scraper(url, 
+#                from_date = timeframe[i], 
+#                to_date = timeframe[i+1], 
+#                output_file = "arxiv_results.csv")
+#}
+
+##########################################
+
+## download pdfs in a separate folder named arxiv_scraped_pdfs
+## maybe not a good idea if there are thousands of results
+#arxiv_scraper(url, output_file = "arxiv_results.csv", download_pdf = T)
